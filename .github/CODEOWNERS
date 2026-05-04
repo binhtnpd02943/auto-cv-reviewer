@@ -1,0 +1,5 @@
+# File quy định người sở hữu code để giới hạn quyền approve PR vào nhánh main
+# Cú pháp: [pattern] [owners...]
+# Thay thế @PO-username và @circle-lead-username bằng user GitHub thật
+
+* @PO-username @circle-lead-username

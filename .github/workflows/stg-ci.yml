@@ -35,5 +35,5 @@ jobs:
       - name: Dry-run Build Docker Image
         run: |
           echo "Thực hiện build thử Docker image để đảm bảo không có lỗi..."
-          docker-compose build
+          docker compose build
           echo "Build thành công! Sẵn sàng cho quá trình deploy thật."

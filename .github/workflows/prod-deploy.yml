@@ -1,0 +1,76 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Deploy to Production VM via SSH
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script_stop: true
+          script: |
+            BASE_DIR="/opt/auto-cv-reviewer"
+            TIMESTAMP=$(date +%Y%m%d%H%M%S)
+            NEW_RELEASE_DIR="$BASE_DIR/releases/$TIMESTAMP"
+            
+            # Tạo thư mục tạm để đẩy code lên
+            mkdir -p /tmp/auto-cv-upload-$TIMESTAMP
+            
+      - name: Sync Code to Server
+        uses: appleboy/scp-action@v0.1.4
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "."
+          target: "/tmp/auto-cv-upload-${{ github.sha }}"
+
+      - name: Execute Deploy Script
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script_stop: true
+          script: |
+            TIMESTAMP=$(date +%Y%m%d%H%M%S)
+            TMP_DIR="/tmp/auto-cv-upload-${{ github.sha }}"
+            BASE_DIR="/opt/auto-cv-reviewer"
+            NEW_RELEASE_DIR="$BASE_DIR/releases/$TIMESTAMP"
+            
+            echo "Khởi tạo thư mục shared nếu chưa có..."
+            mkdir -p "$BASE_DIR/shared"
+            
+            # Nếu PROD_ENV_FILE được thiết lập trong GitHub Secrets, xuất ra file shared
+            # Đoạn này để phòng hờ file .env chưa có trên server
+            echo "${{ secrets.PROD_ENV_FILE }}" > "$BASE_DIR/shared/.env.temp"
+            if [ -s "$BASE_DIR/shared/.env.temp" ]; then
+                mv "$BASE_DIR/shared/.env.temp" "$BASE_DIR/shared/.env"
+            else
+                rm -f "$BASE_DIR/shared/.env.temp"
+            fi
+            
+            echo "Di chuyển code sang thư mục release: $NEW_RELEASE_DIR"
+            mkdir -p "$BASE_DIR/releases"
+            mv "$TMP_DIR" "$NEW_RELEASE_DIR"
+            
+            cd "$NEW_RELEASE_DIR"
+            
+            echo "Đang cấp quyền thực thi cho các script..."
+            chmod +x scripts/*.sh
+            
+            echo "Gọi deploy script..."
+            # Cần chỉ định chính xác đường dẫn hoặc gọi script ở thư mục hiện hành
+            bash scripts/deploy.sh

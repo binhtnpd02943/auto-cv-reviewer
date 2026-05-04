@@ -4,9 +4,9 @@ services:
   # Cấu hình cho Redis
   redis:
     image: redis:7-alpine
-    container_name: auto_cv_redis
+    # Xoá fix cứng container_name để tránh xung đột trên shared host
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     # Lưu dữ liệu Redis xuống ổ cứng server để không bị mất Job khi restart
     volumes:
       - redis_data:/data
@@ -15,9 +15,9 @@ services:
   # Cấu hình cho Node.js App (API + Workers)
   app:
     build: .
-    container_name: auto_cv_app
+    # Xoá fix cứng container_name
     ports:
-      - "3000:3000"
+      - "${APP_PORT:-3000}:3000"
     depends_on:
       - redis
     environment:
@@ -35,3 +35,4 @@ services:
 
 volumes:
   redis_data:
+

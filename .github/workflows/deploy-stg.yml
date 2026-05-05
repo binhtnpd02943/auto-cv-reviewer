@@ -7,7 +7,7 @@ on:
 
 jobs:
   build-and-deploy-stg:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, macOS, ARM64]
 
     steps:
       - name: Checkout Source Code
@@ -18,24 +18,13 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Test Build Docker Image
-        run: docker compose build
-
-      - name: Deploy to Staging Server
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.STG_SSH_PRIVATE_KEY }}
-          HOST: ${{ secrets.STG_HOST }}
-          USER: ${{ secrets.STG_USER }}
+      - name: Deploy to Local Staging (Mac M1)
         run: |
-          # This is a stub for the actual deployment step to STG
-          echo "Deploying to staging environment..."
-          # Example SSH deployment:
-          # mkdir -p ~/.ssh
-          # echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
-          # chmod 600 ~/.ssh/id_rsa
-          # ssh -o StrictHostKeyChecking=no $USER@$HOST "cd /path/to/app-stg && git pull origin stg && bash scripts/deploy.sh"
+          echo "Deploying directly on Mac M1 (Staging)..."
+          # Chạy script deploy. Nó sẽ dùng Docker Desktop để build và up container
+          bash scripts/deploy.sh
 
       - name: Post-Deploy Healthcheck
         run: |
           echo "Running healthcheck..."
-          # bash scripts/healthcheck.sh (on the target server)
+          bash scripts/healthcheck.sh

@@ -18,6 +18,9 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Copy local .env file
+        run: cp /Users/mac/Documents/Source-TechZen/auto-cv-reviewer/.env .
+
       - name: Deploy to Local Staging (Mac M1)
         run: |
           echo "Deploying directly on Mac M1 (Staging)..."

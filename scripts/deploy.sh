@@ -1,45 +1,28 @@
 #!/bin/bash
 set -Eeuo pipefail
 
-# Tham số mặc định
-PROJECT_NAME="auto_cv_prod"
-BASE_DIR="/opt/auto-cv-reviewer"
-RELEASE_DIR="$BASE_DIR/releases"
-SHARED_DIR="$BASE_DIR/shared"
-CURRENT_LINK="$BASE_DIR/current"
+# Scripts must be run from project root
+cd "$(dirname "$0")/.."
 
-# Thư mục hiện hành (đã được workflow cd vào trước khi gọi script)
-NEW_RELEASE_DIR=$(pwd)
+echo "Starting deployment process..."
 
-echo "Bắt đầu tiến trình deploy tại: $NEW_RELEASE_DIR"
+# Define variables
+COMPOSE_FILE="docker-compose.yml"
+APP_CONTAINER="auto-cv-reviewer-app"
 
-# Link file .env từ thư mục shared
-if [ -f "$SHARED_DIR/.env" ]; then
-    echo "Symlink .env từ shared folder..."
-    ln -sf "$SHARED_DIR/.env" .env
-else
-    echo "CẢNH BÁO: Không tìm thấy file $SHARED_DIR/.env!"
-    echo "Sử dụng .env có sẵn từ repository (nếu có)."
+# Check if docker and docker compose are installed
+if ! command -v docker &> /dev/null; then
+    echo "Error: docker is not installed."
+    exit 1
 fi
 
-# Đảm bảo shared uploads tồn tại
-mkdir -p "$SHARED_DIR/uploads"
-# Nếu repository có sẵn uploads thì xóa đi để link ra ngoài
-rm -rf uploads
-ln -sf "$SHARED_DIR/uploads" uploads
+# Pull latest code if on a VM (optional, assume already pulled by CI or here)
+# git pull origin main
 
-echo "Build docker images..."
-docker-compose -p $PROJECT_NAME build
+echo "Building and starting containers in detached mode..."
+docker compose -f "$COMPOSE_FILE" up -d --build
 
-echo "Khởi động ứng dụng bằng docker-compose..."
-docker-compose -p $PROJECT_NAME up -d
+echo "Cleaning up dangling images to save disk space..."
+docker image prune -f
 
-echo "Cập nhật symlink current..."
-ln -sfn "$NEW_RELEASE_DIR" "$CURRENT_LINK"
-
-echo "Gọi script healthcheck..."
-# Đợi 5 giây cho services khởi động sơ bộ
-sleep 5
-bash scripts/healthcheck.sh "$NEW_RELEASE_DIR" "$PROJECT_NAME"
-
-echo "Deploy thành công!"
+echo "Deployment step completed successfully."

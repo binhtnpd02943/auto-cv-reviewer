@@ -1,38 +1,41 @@
 version: '3.8'
 
 services:
-  # Cấu hình cho Redis
-  redis:
-    image: redis:7-alpine
-    # Xoá fix cứng container_name để tránh xung đột trên shared host
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
-    # Lưu dữ liệu Redis xuống ổ cứng server để không bị mất Job khi restart
-    volumes:
-      - redis_data:/data
-    restart: always
-
-  # Cấu hình cho Node.js App (API + Workers)
   app:
-    build: .
-    # Xoá fix cứng container_name
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: auto-cv-reviewer-app
+    container_name: auto-cv-reviewer-app
+    restart: unless-stopped
     ports:
-      - "${APP_PORT:-3000}:3000"
-    depends_on:
-      - redis
+      - "3000:3000"
     environment:
-      # KHÔNG ĐƯỢC ĐỂ LÀ localhost. Phải trỏ tên service 'redis'
+      - PORT=3000
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - PORT=3000
-    # Đọc thêm biến môi trường (như GEMINI_API_KEY) từ file .env
+      # Add other environment variables as needed or use env_file
     env_file:
       - .env
     volumes:
-      # Mount thư mục uploads ra ngoài để dễ quản lý (Tùy chọn)
       - ./uploads:/usr/src/app/uploads
-    restart: always
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  redis:
+    image: redis:7-alpine
+    container_name: auto-cv-reviewer-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
   redis_data:
-

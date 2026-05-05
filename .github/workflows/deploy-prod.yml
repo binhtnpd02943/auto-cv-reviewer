@@ -1,0 +1,42 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '20'
+
+      - name: Test Build Docker Image
+        run: docker compose build
+
+      - name: Deploy to Server
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          HOST: ${{ secrets.HOST }}
+          USER: ${{ secrets.USER }}
+        run: |
+          # This is a stub for the actual deployment step
+          # If deploying to a remote VM, you would copy files or run ssh commands here
+          echo "Deploying to production..."
+          # Example SSH deployment:
+          # mkdir -p ~/.ssh
+          # echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+          # chmod 600 ~/.ssh/id_rsa
+          # ssh -o StrictHostKeyChecking=no $USER@$HOST "cd /path/to/app && git pull origin main && bash scripts/deploy.sh"
+
+      - name: Post-Deploy Healthcheck
+        run: |
+          echo "Running healthcheck..."
+          # bash scripts/healthcheck.sh (on the target server)

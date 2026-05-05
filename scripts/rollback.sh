@@ -1,35 +1,22 @@
 #!/bin/bash
 set -Eeuo pipefail
 
-PROJECT_NAME=$1
-BASE_DIR="/opt/auto-cv-reviewer"
-RELEASE_DIR="$BASE_DIR/releases"
-CURRENT_LINK="$BASE_DIR/current"
+cd "$(dirname "$0")/.."
 
-echo "Bắt đầu tiến trình rollback..."
+echo "Initiating rollback process..."
 
-# Lấy danh sách các thư mục release, sắp xếp theo thời gian giảm dần
-RELEASES=($(ls -dt "$RELEASE_DIR"/*/))
+# Rollback strategy: Bring down current containers, revert git to previous commit, rebuild and restart
+COMPOSE_FILE="docker-compose.yml"
 
-if [ ${#RELEASES[@]} -lt 2 ]; then
-    echo "LỖI: Không tìm thấy bản release cũ nào để rollback!"
-    exit 1
-fi
+echo "Bringing down current containers..."
+docker compose -f "$COMPOSE_FILE" down
 
-PREVIOUS_RELEASE=${RELEASES[1]}
-PREVIOUS_RELEASE=${PREVIOUS_RELEASE%/}
+echo "Reverting git repository to previous commit..."
+# This will hard reset to the previous commit (HEAD~1)
+# Note: Use with caution. Only suitable if rollback logic is isolated per deployment attempt.
+git reset --hard HEAD~1
 
-echo "Bản release trước đó: $PREVIOUS_RELEASE"
+echo "Rebuilding and starting containers with previous code..."
+docker compose -f "$COMPOSE_FILE" up -d --build
 
-# Khôi phục symlink
-echo "Khôi phục symlink current trỏ về bản cũ..."
-ln -sfn "$PREVIOUS_RELEASE" "$CURRENT_LINK"
-
-echo "Stop phiên bản lỗi..."
-docker-compose -p $PROJECT_NAME down
-
-echo "Khởi động lại bản release cũ..."
-cd "$PREVIOUS_RELEASE"
-docker-compose -p $PROJECT_NAME up -d
-
-echo "Rollback hoàn tất. Vui lòng kiểm tra lại hệ thống."
+echo "Rollback completed. Please verify the service health."

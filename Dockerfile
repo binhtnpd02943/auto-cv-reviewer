@@ -1,23 +1,23 @@
-# Sử dụng base image Node.js bản gọn nhẹ (Alpine) để tối ưu dung lượng
 FROM node:20-alpine
 
-# Thiết lập thư mục làm việc bên trong container
+# Set working directory
 WORKDIR /usr/src/app
 
-# Copy package.json và package-lock.json (nếu có) vào trước
+# Install dependencies first for better caching
 COPY package*.json ./
+RUN npm ci --only=production
 
-# Cài đặt các thư viện (chỉ cài dependencies dùng cho production)
-RUN npm install --production
-
-# Copy toàn bộ mã nguồn vào container
+# Copy application code
 COPY . .
 
-# Tạo thư mục uploads để Multer lưu file tạm (tránh lỗi crash khi thư mục chưa tồn tại)
-RUN mkdir -p uploads
+# Ensure uploads directory exists
+RUN mkdir -p uploads && chown -R node:node uploads
 
-# Mở cổng 3000 để giao tiếp ra bên ngoài
+# Switch to non-root user
+USER node
+
+# Expose the application port
 EXPOSE 3000
 
-# Lệnh khởi động server
-CMD ["node", "src/app.js"]
+# Start the application
+CMD ["npm", "start"]

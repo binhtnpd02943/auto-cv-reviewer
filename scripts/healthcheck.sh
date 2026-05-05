@@ -9,6 +9,11 @@ RETRY_INTERVAL=10
 
 echo "Checking health of application on port $APP_PORT..."
 
+echo "=========================================================="
+echo "🚨 CỐ Ý GÂY LỖI HEALTHCHECK ĐỂ TEST TIẾN TRÌNH ROLLBACK 🚨"
+echo "=========================================================="
+exit 1
+
 for i in $(seq 1 $MAX_RETRIES); do
     # Assuming there's a basic health route, or just checking if port accepts connections
     # For a proper express app, typically you have a GET / ping or /health

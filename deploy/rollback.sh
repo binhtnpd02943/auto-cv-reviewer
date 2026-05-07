@@ -30,8 +30,11 @@ echo "-> Rolling back from $CURRENT_TAG to image tag: $PREVIOUS_TAG"
 sed -i '/^RELEASE_ID=/d' .env
 echo "RELEASE_ID=$PREVIOUS_TAG" >> .env
 
+# Lựa chọn lệnh docker-compose tương thích với hệ thống
+DOCKER_COMPOSE_CMD=$(command -v docker-compose >/dev/null 2>&1 && echo "docker-compose" || echo "docker compose")
+
 # Chạy lại docker compose với tag cũ
-docker compose -f "$COMPOSE_FILE" --project-name "cv-reviewer-$ENV" up -d
+$DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" -p "cv-reviewer-$ENV" up -d
 
 # Kiểm tra lại Healthcheck sau khi rollback
 echo "-> Verifying Rollback..."

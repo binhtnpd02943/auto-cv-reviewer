@@ -47,9 +47,12 @@ echo "RELEASE_ID=$RELEASE_ID" >> "$SOURCE_DIR/.env"
 echo "-> Building Docker Image cv-reviewer-$ENV:$RELEASE_ID..."
 docker build -t cv-reviewer-$ENV:$RELEASE_ID .
 
+# Lựa chọn lệnh docker-compose tương thích với hệ thống
+DOCKER_COMPOSE_CMD=$(command -v docker-compose >/dev/null 2>&1 && echo "docker-compose" || echo "docker compose")
+
 # 6. Deploy with Docker Compose
 echo "-> Starting containers..."
-docker compose -f "$COMPOSE_FILE" --project-name "cv-reviewer-$ENV" up -d
+$DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" -p "cv-reviewer-$ENV" up -d
 
 # 7. Healthcheck
 echo "-> Running Healthcheck..."

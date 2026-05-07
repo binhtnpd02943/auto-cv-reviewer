@@ -1,16 +1,14 @@
-version: '3.8'
-
 services:
   app:
-    image: cv-reviewer-prod:${RELEASE_ID:-latest}
-    container_name: cv-reviewer-prod-app
+    image: cv-reviewer-production:${RELEASE_ID:-latest}
+    container_name: cv-reviewer-production-app
     restart: always
     ports:
       - "3000:3000" # Map host 3000 to container 3000
     env_file:
       - .env
     environment:
-      - REDIS_HOST=cv-reviewer-prod-redis
+      - REDIS_HOST=cv-reviewer-production-redis
       - REDIS_PORT=6379
       - NODE_ENV=production
       - PORT=3000
@@ -22,7 +20,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: cv-reviewer-prod-redis
+    container_name: cv-reviewer-production-redis
     restart: always
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]

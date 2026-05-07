@@ -30,22 +30,8 @@ echo "-> Rolling back from $CURRENT_TAG to image tag: $PREVIOUS_TAG"
 sed -i '/^RELEASE_ID=/d' .env
 echo "RELEASE_ID=$PREVIOUS_TAG" >> .env
 
-# Locate Docker Compose robustly
-if [ -x "$(command -v docker-compose)" ]; then
-    DOCKER_COMPOSE_CMD="docker-compose"
-elif [ -x "/usr/local/bin/docker-compose" ]; then
-    DOCKER_COMPOSE_CMD="/usr/local/bin/docker-compose"
-elif [ -x "/usr/bin/docker-compose" ]; then
-    DOCKER_COMPOSE_CMD="/usr/bin/docker-compose"
-elif docker compose version >/dev/null 2>&1; then
-    DOCKER_COMPOSE_CMD="docker compose"
-else
-    echo "❌ FATAL ERROR: Cannot find docker-compose!"
-    exit 1
-fi
-
-# Chạy lại docker compose với tag cũ
-$DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" -p "cv-reviewer-$ENV" up -d
+# Chạy lại docker compose với tag cũ (Modern V2 Plugin Standard)
+docker compose -f "$COMPOSE_FILE" -p "cv-reviewer-$ENV" up -d
 
 # Kiểm tra lại Healthcheck sau khi rollback
 echo "-> Verifying Rollback..."

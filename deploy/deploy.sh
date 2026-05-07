@@ -8,7 +8,7 @@ RELEASE_ID=$2
 BASE_DIR="/var/www/auto-cv-reviewer/$ENV"
 SOURCE_DIR="$BASE_DIR/source"
 SHARED_DIR="$BASE_DIR/shared"
-TAR_FILE="/tmp/$RELEASE_ID.tar.gz"
+TAR_FILE="/tmp/release-$RELEASE_ID.tar.gz"
 
 echo "=========================================="
 echo " Starting Docker Deployment for $ENV"

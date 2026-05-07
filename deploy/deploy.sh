@@ -47,10 +47,22 @@ echo "RELEASE_ID=$RELEASE_ID" >> "$SOURCE_DIR/.env"
 echo "-> Building Docker Image cv-reviewer-$ENV:$RELEASE_ID..."
 docker build -t cv-reviewer-$ENV:$RELEASE_ID .
 
-# Lựa chọn lệnh docker-compose tương thích với hệ thống
-DOCKER_COMPOSE_CMD=$(command -v docker-compose >/dev/null 2>&1 && echo "docker-compose" || echo "docker compose")
+# 6. Locate Docker Compose robustly (SSH non-interactive PATH issue)
+if [ -x "$(command -v docker-compose)" ]; then
+    DOCKER_COMPOSE_CMD="docker-compose"
+elif [ -x "/usr/local/bin/docker-compose" ]; then
+    DOCKER_COMPOSE_CMD="/usr/local/bin/docker-compose"
+elif [ -x "/usr/bin/docker-compose" ]; then
+    DOCKER_COMPOSE_CMD="/usr/bin/docker-compose"
+elif docker compose version >/dev/null 2>&1; then
+    DOCKER_COMPOSE_CMD="docker compose"
+else
+    echo "❌ FATAL ERROR: Cannot find docker-compose or docker compose plugin!"
+    echo "Please install Docker Compose on the VPS."
+    exit 1
+fi
 
-# 6. Deploy with Docker Compose
+echo "-> Using Compose command: $DOCKER_COMPOSE_CMD"
 echo "-> Starting containers..."
 $DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" -p "cv-reviewer-$ENV" up -d
 

@@ -30,8 +30,19 @@ echo "-> Rolling back from $CURRENT_TAG to image tag: $PREVIOUS_TAG"
 sed -i '/^RELEASE_ID=/d' .env
 echo "RELEASE_ID=$PREVIOUS_TAG" >> .env
 
-# Lựa chọn lệnh docker-compose tương thích với hệ thống
-DOCKER_COMPOSE_CMD=$(command -v docker-compose >/dev/null 2>&1 && echo "docker-compose" || echo "docker compose")
+# Locate Docker Compose robustly
+if [ -x "$(command -v docker-compose)" ]; then
+    DOCKER_COMPOSE_CMD="docker-compose"
+elif [ -x "/usr/local/bin/docker-compose" ]; then
+    DOCKER_COMPOSE_CMD="/usr/local/bin/docker-compose"
+elif [ -x "/usr/bin/docker-compose" ]; then
+    DOCKER_COMPOSE_CMD="/usr/bin/docker-compose"
+elif docker compose version >/dev/null 2>&1; then
+    DOCKER_COMPOSE_CMD="docker compose"
+else
+    echo "❌ FATAL ERROR: Cannot find docker-compose!"
+    exit 1
+fi
 
 # Chạy lại docker compose với tag cũ
 $DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" -p "cv-reviewer-$ENV" up -d

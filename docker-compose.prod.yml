@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  app:
+    image: cv-reviewer-prod:${RELEASE_ID:-latest}
+    container_name: cv-reviewer-prod-app
+    restart: always
+    ports:
+      - "3000:3000" # Map host 3000 to container 3000
+    env_file:
+      - .env
+    environment:
+      - REDIS_HOST=cv-reviewer-prod-redis
+      - REDIS_PORT=6379
+      - NODE_ENV=production
+      - PORT=3000
+    volumes:
+      - ./uploads:/usr/src/app/uploads
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  redis:
+    image: redis:7-alpine
+    container_name: cv-reviewer-prod-redis
+    restart: always
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3

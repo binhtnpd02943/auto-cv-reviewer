@@ -1,4 +1,4 @@
-name: Deploy to Staging
+name: Deploy Staging
 
 on:
   push:
@@ -6,36 +6,36 @@ on:
       - stg
 
 jobs:
-  build-and-deploy-stg:
-    runs-on: [self-hosted, macOS, ARM64]
-
+  deploy:
+    name: Deploy to Staging VPS
+    runs-on: ubuntu-latest
+    
     steps:
-      - name: Checkout Source Code
-        uses: actions/checkout@v3
+      - name: Checkout Code
+        uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
         with:
-          node-version: '20'
+          ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
 
-      - name: Copy local .env file
-        run: cp /Users/mac/Documents/Source-TechZen/auto-cv-reviewer/.env .
+      - name: Add Known Hosts
+        run: ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
 
-      - name: Deploy to Local Staging (Mac M1)
+      - name: Deploy Script execution
+        env:
+          VPS_USER: "root"
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          ENVIRONMENT: "staging"
         run: |
-          echo "Deploying directly on Mac M1 (Staging)..."
-          # Chạy script deploy. Nó sẽ dùng Docker Desktop để build và up container
-          bash scripts/deploy.sh
-
-      - name: Post-Deploy Healthcheck
-        run: |
-          echo "Running healthcheck..."
-          bash scripts/healthcheck.sh
-
-      - name: Rollback on Failure
-        if: failure()
-        run: |
-          echo "Deployment or Healthcheck failed. Initiating rollback..."
-          bash scripts/rollback.sh
+          # Copy repo content via tar
+          TAR_FILE="/tmp/release-${GITHUB_SHA::8}.tar.gz"
+          tar -czf $TAR_FILE --exclude='.git' .
+          
+          # Upload tar to VPS
+          scp $TAR_FILE $VPS_USER@$VPS_HOST:/tmp/
+          
+          # Execute deploy script on VPS
+          ssh $VPS_USER@$VPS_HOST "bash -s" < deploy/deploy.sh $ENVIRONMENT ${GITHUB_SHA::8}

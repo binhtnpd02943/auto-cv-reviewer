@@ -7,7 +7,7 @@
 # =============================================================================
 
 # ── Stage 1: Builder ─────────────────────────────────────────────────────────
-FROM node:18-alpine AS builder
+FROM node:20-alpine AS builder
 
 WORKDIR /usr/src/app
 
@@ -22,7 +22,7 @@ RUN npm ci --omit=dev
 COPY . .
 
 # ── Stage 2: Runtime ─────────────────────────────────────────────────────────
-FROM node:18-alpine AS runtime
+FROM node:20-alpine AS runtime
 
 # Cài đặt timezone, curl để phục vụ healthcheck nếu cần
 RUN apk add --no-cache curl tzdata

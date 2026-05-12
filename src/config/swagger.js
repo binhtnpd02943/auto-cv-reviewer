@@ -14,10 +14,15 @@ const options = {
         name: 'Backend Team',
       },
     },
+    // --- CHÂN ÁI NẰM Ở ĐÂY ---
     servers: [
       {
+        url: '/', // Tự động nhận diện host và giao thức (http/https) hiện tại
+        description: 'Current Environment (Auto-detected)',
+      },
+      {
         url: 'http://localhost:3000',
-        description: 'Development Server',
+        description: 'Local Development Server',
       },
     ],
   },
@@ -27,7 +32,10 @@ const options = {
 const swaggerSpec = swaggerJsdoc(options);
 
 function swaggerDocs(app) {
-  app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+  // Thêm options explorer để giao diện trực quan hơn
+  app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
+    explorer: true,
+  }));
 
   app.get('/docs.json', (req, res) => {
     res.json(swaggerSpec);

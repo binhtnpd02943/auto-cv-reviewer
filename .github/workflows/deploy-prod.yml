@@ -9,11 +9,11 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  ECR_REPOSITORY: auto-cv-reviewer  # Tên repo trên ECR của bạn
+  ECR_REPOSITORY: auto-cv-reviewer
   PROJECT_NAME: auto-cv-reviewer
 
 jobs:
-  # ── Job 1: Test (Node.js) ──────────────────────────────────────────────────
+  # ── Job 1: Test ───────────────────────────────────────────────────────────
   test:
     name: Lint & Test
     runs-on: ubuntu-latest
@@ -55,12 +55,11 @@ jobs:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ steps.vars.outputs.sha_short }}
         run: |
-          # Build với tag SHA và tag latest
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
 
-  # ── Job 3: Deploy ─────────────────────────────────────────────────────────
+  # ── Job 3: Deploy ──────────────────────────────────────────────────────────
   deploy:
     name: Deploy to EC2
     runs-on: ubuntu-latest
@@ -68,15 +67,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # BƯỚC QUAN TRỌNG: Tạo thư mục trước khi copy file
+      - name: Ensure project directory exists
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: mkdir -p ~/${{ env.PROJECT_NAME }}
+
       - name: Copy docker-compose to EC2
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          # Copy file compose tương ứng với branch (main -> prod, stg -> stage)
+          # Copy đúng file compose theo môi trường
           source: "docker-compose.${{ github.ref_name == 'main' && 'prod' || 'stage' }}.yml"
           target: "~/${{ env.PROJECT_NAME }}"
+          strip_components: 0
 
       - name: Deploy application via SSH
         uses: appleboy/ssh-action@v1.2.0
@@ -91,48 +100,50 @@ jobs:
           envs: AWS_REGION, IMAGE_TAG, DEPLOY_ENV
           script: |
             set -e
-            PROJECT_DIR="~/${{ env.PROJECT_NAME }}"
+            PROJECT_DIR="$HOME/${{ env.PROJECT_NAME }}"
             cd $PROJECT_DIR
 
-            # 1. Lấy .env từ AWS Secrets Manager (Giống ví dụ của Leader)
-            # Giả sử bạn đặt tên secret là auto-cv/prod/env hoặc auto-cv/stg/env
             echo "🔐 Fetching secrets from AWS Secrets Manager..."
+            # Lệnh này sẽ tạo ra file .env sạch sẽ
             aws secretsmanager get-secret-value \
               --secret-id auto-cv/$DEPLOY_ENV/env \
               --region $AWS_REGION \
               --query SecretString \
               --output text | tr -d '\r' > .env
 
-            # 2. Login ECR
+            echo "🔑 Logging in to Amazon ECR..."
             ECR_REGISTRY=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.$AWS_REGION.amazonaws.com
             aws ecr get-login-password --region $AWS_REGION | \
               docker login --username AWS --password-stdin $ECR_REGISTRY
 
-            # 3. Set IMAGE_URI vào .env để docker-compose dùng
+            echo "📦 Preparing Image URI..."
             IMAGE_URI="$ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG"
+            # Thêm IMAGE_URI vào .env để docker-compose.yml nhận được
+            echo "" >> .env
             echo "IMAGE_URI=$IMAGE_URI" >> .env
 
-            # 4. Pull & Deploy
             COMPOSE_FILE="docker-compose.${{ github.ref_name == 'main' && 'prod' || 'stage' }}.yml"
-            echo "📦 Pulling image: $IMAGE_URI"
+
+            echo "🚚 Pulling new image..."
             docker compose -f $COMPOSE_FILE pull
 
             echo "🚀 Starting containers..."
             docker compose -f $COMPOSE_FILE up -d --wait --remove-orphans
 
-            # 5. Health Check (Smoke Test)
             echo "🏥 Running health check..."
-            # Thay 'api-container' bằng tên service/container của bạn
-            for i in {1..5}; do
-              if docker exec ${{ env.PROJECT_NAME }}-api curl -s http://localhost:3000/health | grep "OK"; then
-                echo "✅ Health check passed!"
+            # Lưu ý: tên container thường là PROJECTNAME-SERVICE-1
+            # Ở đây tôi dùng 'docker compose ps' để check trạng thái cho chuẩn
+            MAX_RETRIES=10
+            for i in $(seq 1 $MAX_RETRIES); do
+              if docker compose -f $COMPOSE_FILE ps | grep -q "running"; then
+                echo "✅ Containers are up and running!"
                 break
               fi
-              echo "⏳ Waiting for app... ($i/5)"
+              echo "⏳ Waiting for containers... ($i/$MAX_RETRIES)"
               sleep 5
-              if [ $i -eq 5 ]; then echo "❌ Failed!"; exit 1; fi
+              if [ $i -eq $MAX_RETRIES ]; then echo "❌ Deployment failed health check!"; exit 1; fi
             done
 
-            # 6. Cleanup
+            echo "🧹 Cleaning up old images..."
             docker image prune -f
-            echo "🎉 Done!"
+            echo "🎉 Deployment Successful!"

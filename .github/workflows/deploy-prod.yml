@@ -1,18 +1,25 @@
-name: CI/CD Production Auto-Deploy
+name: Deploy Auto-CV Reviewer to AWS ECR
 
 on:
   push:
-    branches: [stg, main]
-  pull_request:
-    branches: [main]
+    branches: [main, stg]
+
+concurrency:
+  group: deploy-${{ github.ref_name }}
+  cancel-in-progress: true
+
+env:
+  ECR_REPOSITORY: auto-cv-reviewer  # Tên repo trên ECR của bạn
+  PROJECT_NAME: auto-cv-reviewer
 
 jobs:
-  lint-and-test:
+  # ── Job 1: Test (Node.js) ──────────────────────────────────────────────────
+  test:
+    name: Lint & Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Use Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
@@ -20,19 +27,16 @@ jobs:
       - run: npm run lint
       - run: npm test
 
+  # ── Job 2: Build & Push ────────────────────────────────────────────────────
   build-and-push:
-    needs: lint-and-test
+    name: Build & Push to ECR
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/stg')
+    needs: test
     outputs:
       image_tag: ${{ steps.vars.outputs.sha_short }}
-      image_uri: ${{ steps.image.outputs.image_uri }}
-      ecr_registry: ${{ steps.login-ecr.outputs.registry }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set outputs
-        id: vars
+      - id: vars
         run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
 
       - name: Configure AWS credentials
@@ -46,70 +50,89 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build, tag, and push image to Amazon ECR
-        id: image
+      - name: Build, tag, and push Docker image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_NAME }}
           IMAGE_TAG: ${{ steps.vars.outputs.sha_short }}
         run: |
-          : "${ECR_REPOSITORY:?Set GitHub secret ECR_REPOSITORY_NAME to the ECR repository name, for example auto-cv-reviewer}"
+          # Build với tag SHA và tag latest
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
 
-          aws ecr describe-repositories --repository-names "$ECR_REPOSITORY" >/dev/null 2>&1 \
-            || aws ecr create-repository \
-              --repository-name "$ECR_REPOSITORY" \
-              --image-scanning-configuration scanOnPush=true \
-              --encryption-configuration encryptionType=AES256 >/dev/null
-
-          IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
-          docker build -t "$IMAGE_URI" .
-          docker push "$IMAGE_URI"
-          # Also tag as latest for convenience (optional, but keep SHA for prod)
-          docker tag "$IMAGE_URI" "$ECR_REGISTRY/$ECR_REPOSITORY:latest"
-          docker push "$ECR_REGISTRY/$ECR_REPOSITORY:latest"
-          echo "image_uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
-
-  deploy-prod:
-    needs: build-and-push
+  # ── Job 3: Deploy ─────────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to EC2
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-    concurrency: production_deploy
+    needs: build-and-push
     steps:
       - uses: actions/checkout@v4
 
-      - name: Copy files to EC2
-        uses: appleboy/scp-action@master
+      - name: Copy docker-compose to EC2
+        uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
+          username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          source: 'docker-compose.prod.yml,deploy/'
-          target: '~/auto-cv-reviewer/'
+          # Copy file compose tương ứng với branch (main -> prod, stg -> stage)
+          source: "docker-compose.${{ github.ref_name == 'main' && 'prod' || 'stage' }}.yml"
+          target: "~/${{ env.PROJECT_NAME }}"
 
-      - name: Deploy to EC2 via SSH
-        uses: appleboy/ssh-action@master
+      - name: Deploy application via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
+          DEPLOY_ENV: ${{ github.ref_name == 'main' && 'prod' || 'stg' }}
         with:
           host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
+          username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
+          envs: AWS_REGION, IMAGE_TAG, DEPLOY_ENV
           script: |
-            cd ~/auto-cv-reviewer
+            set -e
+            PROJECT_DIR="~/${{ env.PROJECT_NAME }}"
+            cd $PROJECT_DIR
 
-            # Setup environment variables for the script
-            export ECR_REGISTRY=${{ needs.build-and-push.outputs.ecr_registry }}
-            export IMAGE_URI=${{ needs.build-and-push.outputs.image_uri }}
-            export IMAGE_TAG=${{ needs.build-and-push.outputs.image_tag }}
-            export ENV_PROD='${{ secrets.ENV_PROD }}'
-            export AWS_REGION=${{ secrets.AWS_REGION }}
+            # 1. Lấy .env từ AWS Secrets Manager (Giống ví dụ của Leader)
+            # Giả sử bạn đặt tên secret là auto-cv/prod/env hoặc auto-cv/stg/env
+            echo "🔐 Fetching secrets from AWS Secrets Manager..."
+            aws secretsmanager get-secret-value \
+              --secret-id auto-cv/$DEPLOY_ENV/env \
+              --region $AWS_REGION \
+              --query SecretString \
+              --output text | tr -d '\r' > .env
 
-            # Login ECR on server
-            aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+            # 2. Login ECR
+            ECR_REGISTRY=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.$AWS_REGION.amazonaws.com
+            aws ecr get-login-password --region $AWS_REGION | \
+              docker login --username AWS --password-stdin $ECR_REGISTRY
 
-            # Set permissions
-            chmod +x deploy/*.sh
+            # 3. Set IMAGE_URI vào .env để docker-compose dùng
+            IMAGE_URI="$ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG"
+            echo "IMAGE_URI=$IMAGE_URI" >> .env
 
-            # Execute deployment
-            ./deploy/deploy.sh production "$IMAGE_TAG"
+            # 4. Pull & Deploy
+            COMPOSE_FILE="docker-compose.${{ github.ref_name == 'main' && 'prod' || 'stage' }}.yml"
+            echo "📦 Pulling image: $IMAGE_URI"
+            docker compose -f $COMPOSE_FILE pull
 
-            # Cleanup old images
+            echo "🚀 Starting containers..."
+            docker compose -f $COMPOSE_FILE up -d --wait --remove-orphans
+
+            # 5. Health Check (Smoke Test)
+            echo "🏥 Running health check..."
+            # Thay 'api-container' bằng tên service/container của bạn
+            for i in {1..5}; do
+              if docker exec ${{ env.PROJECT_NAME }}-api curl -s http://localhost:3000/health | grep "OK"; then
+                echo "✅ Health check passed!"
+                break
+              fi
+              echo "⏳ Waiting for app... ($i/5)"
+              sleep 5
+              if [ $i -eq 5 ]; then echo "❌ Failed!"; exit 1; fi
+            done
+
+            # 6. Cleanup
             docker image prune -f
+            echo "🎉 Done!"

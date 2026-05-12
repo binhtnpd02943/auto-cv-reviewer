@@ -1,6 +1,6 @@
 services:
   app:
-    image: ${IMAGE_URI:?IMAGE_URI is required}
+    image: ${IMAGE_URI}
     container_name: cv-reviewer-production-app
     restart: always
     ports:
@@ -23,7 +23,7 @@ services:
     container_name: cv-reviewer-production-redis
     restart: always
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
       timeout: 5s
       retries: 3

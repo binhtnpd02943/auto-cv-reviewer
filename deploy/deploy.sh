@@ -1,63 +1,62 @@
 #!/bin/bash
 set -Eeuo pipefail
 
-# Usage: ./deploy.sh <staging|production> <release-id>
-
-ENV=${1:-production}
-RELEASE_ID=${2:-${IMAGE_TAG:-latest}}
+ENV=${1:-staging}
+RELEASE_ID=${2:-latest}
 APP_DIR=${APP_DIR:-$(pwd)}
 
 echo "=========================================="
-echo " Starting Docker Deployment for $ENV"
-echo " Release ID: $RELEASE_ID"
+echo " 🚀 DEPLOYMENT STARTING ($ENV)"
+echo " 🆔 RELEASE: $RELEASE_ID"
 echo "=========================================="
 
-if [ -z "$ENV" ] || [ -z "$RELEASE_ID" ] || [ -z "${IMAGE_URI:-}" ]; then
-    echo "Usage: $0 <environment> <release-id>"
-    echo "Required env: IMAGE_URI"
+# 1. Kiểm tra IMAGE_URI (con mẹ nó đây này)
+if [ -z "${IMAGE_URI:-}" ]; then
+    echo "❌ LỖI: Không tìm thấy IMAGE_URI trong môi trường!"
     exit 1
 fi
 
 cd "$APP_DIR"
-COMPOSE_FILE=$([ "$ENV" == "production" ] && echo "docker-compose.prod.yml" || echo "docker-compose.stage.yml")
 
-# 1. Setup runtime files if missing
-mkdir -p uploads
-touch .env
-cp .env .env.previous
-if [ -n "${ENV_PROD:-}" ]; then
-    printf '%s\n' "$ENV_PROD" > .env
+# 2. Xử lý file .env
+echo "-> Cấu hình môi trường..."
+[ -f .env ] && cp .env .env.example
+
+# Tạo file .env mới từ Secret nếu có truyền xuống
+if [ -n "${ENV_CONTENT:-}" ]; then
+    printf '%s\n' "$ENV_CONTENT" > .env
 fi
 
-# 2. Backup current state
-echo "-> Running backup..."
-bash deploy/backup.sh "$ENV"
-
-# 3. Prepare Compose env
-sed -i '/^RELEASE_ID=/d;/^IMAGE_URI=/d' .env
-echo "RELEASE_ID=$RELEASE_ID" >> .env
+# Chèn/Cập nhật các biến build vào cuối file .env
+sed -i '/^IMAGE_URI=/d;/^RELEASE_ID=/d' .env || touch .env
 echo "IMAGE_URI=$IMAGE_URI" >> .env
+echo "RELEASE_ID=$RELEASE_ID" >> .env
 
-# 4. Pull immutable image built by CI
-echo "-> Pulling Docker image $IMAGE_URI..."
+# 3. Pull image mới
+echo "-> Đang tải image: $IMAGE_URI"
 docker pull "$IMAGE_URI"
 
-# 5. Deploy with Docker Compose (Modern V2 Plugin Standard)
-echo "-> Starting containers using modern 'docker compose'..."
-docker compose -f "$COMPOSE_FILE" -p "cv-reviewer-$ENV" up -d
+# 4. Chạy Docker Compose
+COMPOSE_FILE="docker-compose.$([ "$ENV" == "production" ] && echo "prod" || echo "stage").yml"
 
-# 6. Healthcheck
-echo "-> Running Healthcheck..."
-bash deploy/healthcheck.sh "$ENV" || {
-    echo "❌ Healthcheck failed! Attempting automatic rollback..."
-    bash deploy/rollback.sh "$ENV"
-    exit 1
-}
+echo "-> Thực thi docker compose..."
+docker compose -f "$COMPOSE_FILE" -p "cv-$ENV" up -d
 
-# 7. Cleanup old images
-echo "-> Pruning old images..."
-docker image prune -a --filter "until=24h" -f || true
+# 5. Healthcheck (Nếu có)
+if [ -f deploy/healthcheck.sh ]; then
+    echo "-> Kiểm tra trạng thái hệ thống..."
+    bash deploy/healthcheck.sh "$ENV" || {
+        echo "❌ Healthcheck thất bại! Đang khôi phục..."
+        [ -f .env.bak ] && mv .env.bak .env
+        docker compose -f "$COMPOSE_FILE" -p "cv-$ENV" up -d
+        exit 1
+    }
+fi
+
+# 6. Dọn dẹp rác (Xóa các image cũ không dùng để tránh đầy ổ cứng)
+echo "-> Dọn dẹp image cũ..."
+docker image prune -f --filter "until=24h"
 
 echo "=========================================="
-echo " ✅ Deployment Successful!"
+echo " ✅ DEPLOY $ENV THÀNH CÔNG!"
 echo "=========================================="

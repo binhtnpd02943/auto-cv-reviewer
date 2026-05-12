@@ -37,7 +37,11 @@ createBullBoard({
 const app = express();
 
 // Security & Optimization Middleware
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: false, // Cho phép Swagger UI load script/style local
+  crossOriginOpenerPolicy: false, // Fix lỗi COOP ignored trên IP không có SSL
+  crossOriginResourcePolicy: false,
+}));
 app.use(cors());
 app.use(compression());
 app.use(express.json());

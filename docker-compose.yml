@@ -1,37 +1,40 @@
 version: '3.8'
 
 services:
-  # Cấu hình cho Redis
-  redis:
-    image: redis:7-alpine
-    container_name: auto_cv_redis
-    ports:
-      - "6379:6379"
-    # Lưu dữ liệu Redis xuống ổ cứng server để không bị mất Job khi restart
-    volumes:
-      - redis_data:/data
-    restart: always
-
-  # Cấu hình cho Node.js App (API + Workers)
+  # App container cho việc dev local (sử dụng nodemon để auto-reload code)
   app:
-    build: .
-    container_name: auto_cv_app
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: cv-reviewer-local-app
     ports:
       - "3000:3000"
-    depends_on:
-      - redis
-    environment:
-      # KHÔNG ĐƯỢC ĐỂ LÀ localhost. Phải trỏ tên service 'redis'
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - PORT=3000
-    # Đọc thêm biến môi trường (như GEMINI_API_KEY) từ file .env
     env_file:
       - .env
     volumes:
-      # Mount thư mục uploads ra ngoài để dễ quản lý (Tùy chọn)
-      - ./uploads:/usr/src/app/uploads
-    restart: always
+      # Mount toàn bộ source code vào container để dev local
+      - ./:/usr/src/app
+      # Bỏ qua việc mount đè node_modules từ máy host vào container
+      - /usr/src/app/node_modules
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    # Chạy lệnh dev từ package.json (nodemon) thay vì npm start
+    command: npm run dev
+    depends_on:
+      redis:
+        condition: service_healthy
 
-volumes:
-  redis_data:
+  # Cần Redis để chạy BullMQ local
+  redis:
+    image: redis:7-alpine
+    container_name: cv-reviewer-local-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 3

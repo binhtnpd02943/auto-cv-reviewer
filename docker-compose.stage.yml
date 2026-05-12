@@ -1,0 +1,29 @@
+services:
+  app:
+    image: cv-reviewer-staging:${RELEASE_ID:-latest}
+    container_name: cv-reviewer-staging-app
+    restart: always
+    ports:
+      - "3001:3000" # Map host 3001 to container 3000
+    env_file:
+      - .env
+    environment:
+      - REDIS_HOST=cv-reviewer-staging-redis
+      - REDIS_PORT=6379
+      - NODE_ENV=staging
+      - PORT=3000
+    volumes:
+      - ./uploads:/usr/src/app/uploads
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  redis:
+    image: redis:7-alpine
+    container_name: cv-reviewer-staging-redis
+    restart: always
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3

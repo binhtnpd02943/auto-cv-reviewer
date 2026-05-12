@@ -99,40 +99,51 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           envs: AWS_REGION, IMAGE_TAG, DEPLOY_ENV
           script: |
-            # 1. Khởi tạo môi trường (Fix lỗi command not found & directory not found)
-            sudo apt-get update && sudo apt-get install unzip -y
+            # 1. Cài đặt AWS CLI & Docker nếu thiếu
             if ! command -v aws &> /dev/null; then
+              echo "Installing AWS CLI..."
+              sudo apt-get update && sudo apt-get install unzip -y
               curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-              unzip -o awscliv2.zip
-              sudo ./aws/install
+              unzip -o awscliv2.zip && sudo ./aws/install
               rm -rf awscliv2.zip aws/
             fi
 
-            mkdir -p ~/${{ env.PROJECT_NAME }}
-            cd ~/${{ env.PROJECT_NAME }}
+            if ! command -v docker &> /dev/null; then
+              echo "Installing Docker..."
+              curl -fsSL https://get.docker.com -o get-docker.sh
+              sudo sh get-docker.sh
+              sudo usermod -aG docker $USER
+              # Lệnh này để kích hoạt group docker ngay lập tức mà không cần logout
+              sudo chmod 666 /var/run/docker.sock
+            fi
 
             set -e
+            PROJECT_DIR="$HOME/${{ env.PROJECT_NAME }}"
+            mkdir -p $PROJECT_DIR
+            cd $PROJECT_DIR
 
-            # 2. Lấy Secret từ AWS Manager (Đúng chuẩn Leader)
-            echo "🔐 Fetching secrets..."
+            # 2. Lấy Secret từ AWS Manager
+            echo "🔐 Fetching secrets from AWS Secrets Manager..."
+            # LƯU Ý: Tên secret-id phải khớp 100% với trên AWS Console
             aws secretsmanager get-secret-value \
               --secret-id auto-cv/$DEPLOY_ENV/env \
               --region $AWS_REGION \
               --query SecretString \
-              --output text | tr -d '\r' > .env
+              --output text | tr -d '\r' > .env || (echo "❌ KHÔNG TÌM THẤY SECRET! Check lại tên trên AWS Console." && exit 1)
 
             # 3. Login ECR
             echo "🔑 Logging in ECR..."
             ECR_REGISTRY=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.$AWS_REGION.amazonaws.com
             aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
 
-            # 4. Ghi đè IMAGE_URI vào .env
+            # 4. Set IMAGE_URI
             IMAGE_URI="$ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG"
             sed -i '/^IMAGE_URI=/d' .env || true
             echo "IMAGE_URI=$IMAGE_URI" >> .env
 
             # 5. Pull & Up
             COMPOSE_FILE="docker-compose.${{ github.ref_name == 'main' && 'prod' || 'stage' }}.yml"
+            echo "🚚 Pulling $IMAGE_URI..."
             docker compose -f $COMPOSE_FILE pull
             docker compose -f $COMPOSE_FILE up -d --wait --remove-orphans
 

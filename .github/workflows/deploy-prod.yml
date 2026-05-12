@@ -99,51 +99,54 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           envs: AWS_REGION, IMAGE_TAG, DEPLOY_ENV
           script: |
-            set -e
-            PROJECT_DIR="$HOME/${{ env.PROJECT_NAME }}"
-            cd $PROJECT_DIR
+            # 1. Khởi tạo môi trường (Fix lỗi command not found & directory not found)
+            sudo apt-get update && sudo apt-get install unzip -y
+            if ! command -v aws &> /dev/null; then
+              curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+              unzip -o awscliv2.zip
+              sudo ./aws/install
+              rm -rf awscliv2.zip aws/
+            fi
 
-            echo "🔐 Fetching secrets from AWS Secrets Manager..."
-            # Lệnh này sẽ tạo ra file .env sạch sẽ
+            mkdir -p ~/${{ env.PROJECT_NAME }}
+            cd ~/${{ env.PROJECT_NAME }}
+
+            set -e
+
+            # 2. Lấy Secret từ AWS Manager (Đúng chuẩn Leader)
+            echo "🔐 Fetching secrets..."
             aws secretsmanager get-secret-value \
               --secret-id auto-cv/$DEPLOY_ENV/env \
               --region $AWS_REGION \
               --query SecretString \
               --output text | tr -d '\r' > .env
 
-            echo "🔑 Logging in to Amazon ECR..."
+            # 3. Login ECR
+            echo "🔑 Logging in ECR..."
             ECR_REGISTRY=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.$AWS_REGION.amazonaws.com
-            aws ecr get-login-password --region $AWS_REGION | \
-              docker login --username AWS --password-stdin $ECR_REGISTRY
+            aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
 
-            echo "📦 Preparing Image URI..."
+            # 4. Ghi đè IMAGE_URI vào .env
             IMAGE_URI="$ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG"
-            # Thêm IMAGE_URI vào .env để docker-compose.yml nhận được
-            echo "" >> .env
+            sed -i '/^IMAGE_URI=/d' .env || true
             echo "IMAGE_URI=$IMAGE_URI" >> .env
 
+            # 5. Pull & Up
             COMPOSE_FILE="docker-compose.${{ github.ref_name == 'main' && 'prod' || 'stage' }}.yml"
-
-            echo "🚚 Pulling new image..."
             docker compose -f $COMPOSE_FILE pull
-
-            echo "🚀 Starting containers..."
             docker compose -f $COMPOSE_FILE up -d --wait --remove-orphans
 
-            echo "🏥 Running health check..."
-            # Lưu ý: tên container thường là PROJECTNAME-SERVICE-1
-            # Ở đây tôi dùng 'docker compose ps' để check trạng thái cho chuẩn
-            MAX_RETRIES=10
-            for i in $(seq 1 $MAX_RETRIES); do
-              if docker compose -f $COMPOSE_FILE ps | grep -q "running"; then
-                echo "✅ Containers are up and running!"
-                break
-              fi
-              echo "⏳ Waiting for containers... ($i/$MAX_RETRIES)"
-              sleep 5
-              if [ $i -eq $MAX_RETRIES ]; then echo "❌ Deployment failed health check!"; exit 1; fi
-            done
+            # 6. Health Check
+            echo "🏥 Health checking..."
+            sleep 10
+            if docker compose -f $COMPOSE_FILE ps | grep -q "running"; then
+              echo "✅ DEPLOY SUCCESSFUL!"
+            else
+              echo "❌ DEPLOY FAILED!"
+              docker compose -f $COMPOSE_FILE logs --tail 20
+              exit 1
+            fi
 
-            echo "🧹 Cleaning up old images..."
+            # 7. Cleanup
             docker image prune -f
             echo "🎉 Deployment Successful!"

@@ -1,6 +1,6 @@
 services:
   app:
-    image: cv-reviewer-staging:${RELEASE_ID:-latest}
+    image: ${IMAGE_URI}
     container_name: auto-cv-reviewer-stg
     restart: always
     ports:

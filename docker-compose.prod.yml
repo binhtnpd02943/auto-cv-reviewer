@@ -1,6 +1,6 @@
 services:
   app:
-    image: cv-reviewer-production:${RELEASE_ID:-latest}
+    image: ${IMAGE_URI:?IMAGE_URI is required}
     container_name: cv-reviewer-production-app
     restart: always
     ports:

@@ -26,6 +26,8 @@ jobs:
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/stg')
     outputs:
       image_tag: ${{ steps.vars.outputs.sha_short }}
+      image_uri: ${{ steps.image.outputs.image_uri }}
+      ecr_registry: ${{ steps.login-ecr.outputs.registry }}
     steps:
       - uses: actions/checkout@v4
 
@@ -45,16 +47,27 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build, tag, and push image to Amazon ECR
+        id: image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_NAME }}
           IMAGE_TAG: ${{ steps.vars.outputs.sha_short }}
         run: |
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          : "${ECR_REPOSITORY:?Set GitHub secret ECR_REPOSITORY_NAME to the ECR repository name, for example auto-cv-reviewer}"
+
+          aws ecr describe-repositories --repository-names "$ECR_REPOSITORY" >/dev/null 2>&1 \
+            || aws ecr create-repository \
+              --repository-name "$ECR_REPOSITORY" \
+              --image-scanning-configuration scanOnPush=true \
+              --encryption-configuration encryptionType=AES256 >/dev/null
+
+          IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          docker build -t "$IMAGE_URI" .
+          docker push "$IMAGE_URI"
           # Also tag as latest for convenience (optional, but keep SHA for prod)
-          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          docker tag "$IMAGE_URI" "$ECR_REGISTRY/$ECR_REPOSITORY:latest"
+          docker push "$ECR_REGISTRY/$ECR_REPOSITORY:latest"
+          echo "image_uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
 
   deploy-prod:
     needs: build-and-push
@@ -83,19 +96,20 @@ jobs:
             cd ~/auto-cv-reviewer
 
             # Setup environment variables for the script
-            export ECR_REPOSITORY=${{ secrets.ECR_REPOSITORY }}
+            export ECR_REGISTRY=${{ needs.build-and-push.outputs.ecr_registry }}
+            export IMAGE_URI=${{ needs.build-and-push.outputs.image_uri }}
             export IMAGE_TAG=${{ needs.build-and-push.outputs.image_tag }}
             export ENV_PROD='${{ secrets.ENV_PROD }}'
             export AWS_REGION=${{ secrets.AWS_REGION }}
 
             # Login ECR on server
-            aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REPOSITORY
+            aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$ECR_REGISTRY"
 
             # Set permissions
             chmod +x deploy/*.sh
 
             # Execute deployment
-            ./deploy/deploy.sh
+            ./deploy/deploy.sh production "$IMAGE_TAG"
 
             # Cleanup old images
             docker image prune -f

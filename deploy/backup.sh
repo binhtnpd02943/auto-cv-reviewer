@@ -1,10 +1,10 @@
 #!/bin/bash
 set -Eeuo pipefail
 
-ENV=$1
-BASE_DIR="/var/www/auto-cv-reviewer/$ENV"
-SHARED_DIR="$BASE_DIR/shared"
-BACKUP_DIR="$BASE_DIR/backups"
+ENV=${1:-production}
+APP_DIR=${APP_DIR:-$(pwd)}
+SHARED_DIR="$APP_DIR"
+BACKUP_DIR="$APP_DIR/backups"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
 echo "=========================================="

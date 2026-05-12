@@ -67,7 +67,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # BƯỚC QUAN TRỌNG: Tạo thư mục trước khi copy file
       - name: Ensure project directory exists
         uses: appleboy/ssh-action@v1.2.0
         with:
@@ -82,7 +81,6 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          # Copy đúng file compose theo môi trường
           source: "docker-compose.${{ github.ref_name == 'main' && 'prod' || 'stage' }}.yml"
           target: "~/${{ env.PROJECT_NAME }}"
           strip_components: 0
@@ -113,9 +111,11 @@ jobs:
               curl -fsSL https://get.docker.com -o get-docker.sh
               sudo sh get-docker.sh
               sudo usermod -aG docker $USER
-              # Lệnh này để kích hoạt group docker ngay lập tức mà không cần logout
               sudo chmod 666 /var/run/docker.sock
             fi
+
+            # Tối ưu OS Redis
+            sudo sysctl vm.overcommit_memory=1 || true
 
             set -e
             PROJECT_DIR="$HOME/${{ env.PROJECT_NAME }}"
@@ -124,12 +124,11 @@ jobs:
 
             # 2. Lấy Secret từ AWS Manager
             echo "🔐 Fetching secrets from AWS Secrets Manager..."
-            # LƯU Ý: Tên secret-id phải khớp 100% với trên AWS Console
             aws secretsmanager get-secret-value \
               --secret-id auto-cv/$DEPLOY_ENV/env \
               --region $AWS_REGION \
               --query SecretString \
-              --output text | tr -d '\r' > .env || (echo "❌ KHÔNG TÌM THẤY SECRET! Check lại tên trên AWS Console." && exit 1)
+              --output text | tr -d '\r' > .env || (echo "❌ KHÔNG TÌM THẤY SECRET!" && exit 1)
 
             # 3. Login ECR
             echo "🔑 Logging in ECR..."
@@ -141,23 +140,13 @@ jobs:
             sed -i '/^IMAGE_URI=/d' .env || true
             echo "IMAGE_URI=$IMAGE_URI" >> .env
 
-            # 5. Pull & Up
+            # 5. Pull & Up (ĐÃ DÙNG --wait, KHÔNG CẦN BƯỚC 6 NỮA)
             COMPOSE_FILE="docker-compose.${{ github.ref_name == 'main' && 'prod' || 'stage' }}.yml"
-            echo "🚚 Pulling $IMAGE_URI..."
-            docker compose -f $COMPOSE_FILE pull
-            docker compose -f $COMPOSE_FILE up -d --wait --remove-orphans
+            echo "🚀 Deploying and waiting for container to be healthy..."
+            IMAGE_URI=$IMAGE_URI docker compose -f $COMPOSE_FILE pull
+            IMAGE_URI=$IMAGE_URI docker compose -f $COMPOSE_FILE up -d --wait --remove-orphans
 
-            # 6. Health Check
-            echo "🏥 Health checking..."
-            sleep 10
-            if docker compose -f $COMPOSE_FILE ps | grep -q "running"; then
-              echo "✅ DEPLOY SUCCESSFUL!"
-            else
-              echo "❌ DEPLOY FAILED!"
-              docker compose -f $COMPOSE_FILE logs --tail 20
-              exit 1
-            fi
-
-            # 7. Cleanup
-            docker image prune -f
-            echo "🎉 Deployment Successful!"
+            # 6. Cleanup
+            echo "🧹 Cleaning up old images..."
+            docker image prune -f --filter "until=24h"
+            echo "✅ DEPLOY SUCCESSFUL & VERIFIED!"

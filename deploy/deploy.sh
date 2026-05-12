@@ -10,7 +10,7 @@ echo " 🚀 DEPLOYMENT STARTING ($ENV)"
 echo " 🆔 RELEASE: $RELEASE_ID"
 echo "=========================================="
 
-# 1. Kiểm tra IMAGE_URI (con mẹ nó đây này)
+# 1. Kiểm tra biến môi trường
 if [ -z "${IMAGE_URI:-}" ]; then
     echo "❌ LỖI: Không tìm thấy IMAGE_URI trong môi trường!"
     exit 1
@@ -18,42 +18,53 @@ fi
 
 cd "$APP_DIR"
 
-# 2. Xử lý file .env
-echo "-> Cấu hình môi trường..."
-[ -f .env ] && cp .env .env.example
+# Xác định file compose
+COMPOSE_FILE="docker-compose.$([ "$ENV" == "production" ] && echo "prod" || echo "stage").yml"
 
-# Tạo file .env mới từ Secret nếu có truyền xuống
+# 2. Xử lý file .env và Backup
+echo "-> Cấu hình môi trường..."
+# FIX: Backup đúng đuôi .bak để lát nữa có cái mà khôi phục
+[ -f .env ] && cp .env .env.bak
+
+# Nạp Secret từ GitHub Action / AWS xuống (nếu có)
 if [ -n "${ENV_CONTENT:-}" ]; then
     printf '%s\n' "$ENV_CONTENT" > .env
 fi
 
-# Chèn/Cập nhật các biến build vào cuối file .env
+# Chèn/Cập nhật các biến build
 sed -i '/^IMAGE_URI=/d;/^RELEASE_ID=/d' .env || touch .env
 echo "IMAGE_URI=$IMAGE_URI" >> .env
 echo "RELEASE_ID=$RELEASE_ID" >> .env
 
-# 3. Pull image mới
-echo "-> Đang tải image: $IMAGE_URI"
-docker pull "$IMAGE_URI"
-
-# 4. Chạy Docker Compose
-COMPOSE_FILE="docker-compose.$([ "$ENV" == "production" ] && echo "prod" || echo "stage").yml"
-
-echo "-> Thực thi docker compose..."
-docker compose -f "$COMPOSE_FILE" -p "cv-$ENV" up -d
-
-# 5. Healthcheck (Nếu có)
-if [ -f deploy/healthcheck.sh ]; then
-    echo "-> Kiểm tra trạng thái hệ thống..."
-    bash deploy/healthcheck.sh "$ENV" || {
-        echo "❌ Healthcheck thất bại! Đang khôi phục..."
-        [ -f .env.bak ] && mv .env.bak .env
-        docker compose -f "$COMPOSE_FILE" -p "cv-$ENV" up -d
-        exit 1
-    }
+# 3. Tối ưu OS (Fix lỗi Memory Overcommit của Redis)
+if [ "$(cat /proc/sys/vm/overcommit_memory)" != "1" ]; then
+    echo "-> Bật Overcommit Memory cho Redis..."
+    sudo sysctl vm.overcommit_memory=1 || true
 fi
 
-# 6. Dọn dẹp rác (Xóa các image cũ không dùng để tránh đầy ổ cứng)
+# 4. Pull image mới
+echo "-> Đang tải image: $IMAGE_URI"
+docker compose -f "$COMPOSE_FILE" pull
+
+# 5. Khởi động & Đợi Healthcheck (Native Docker)
+echo "-> Thực thi docker compose (Đang chờ Healthcheck xác nhận)..."
+
+# Dùng --wait để Docker tự check, nếu App không trả về 200 OK, nó sẽ fail lệnh này
+if ! docker compose -f "$COMPOSE_FILE" -p "cv-$ENV" up -d --wait --remove-orphans; then
+    echo "❌ Healthcheck thất bại! Container không ổn định."
+    echo "📋 Log lỗi từ App:"
+    docker compose -f "$COMPOSE_FILE" -p "cv-$ENV" logs --tail 30
+
+    echo "🔄 Đang tự động khôi phục (Rollback) về bản trước đó..."
+    if [ -f .env.bak ]; then
+        mv .env.bak .env
+        docker compose -f "$COMPOSE_FILE" -p "cv-$ENV" up -d --wait --remove-orphans
+        echo "⚠️ Đã rollback thành công. Pipeline sẽ báo đỏ!"
+    fi
+    exit 1
+fi
+
+# 6. Dọn dẹp rác
 echo "-> Dọn dẹp image cũ..."
 docker image prune -f --filter "until=24h"
 

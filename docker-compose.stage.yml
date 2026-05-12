@@ -1,10 +1,10 @@
 services:
   app:
-    image: cv-reviewer-staging:${RELEASE_ID:-latest}
-    container_name: cv-reviewer-staging-app
+    image: ${IMAGE_URI}
+    container_name: auto-cv-reviewer-stg
     restart: always
     ports:
-      - "3001:3000" # Map host 3001 to container 3000
+      - "3001:3000"
     env_file:
       - .env
     environment:
@@ -17,13 +17,21 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+    # --- PHẦN SENIOR FIX ---
+    healthcheck:
+      # Sử dụng curl (nếu image có sẵn) hoặc wget, hoặc node script để check port
+      test: [ "CMD-SHELL", "curl -f http://localhost:3000/health || exit 1" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s # Cho app 15s để khởi động trước khi bắt đầu check
 
   redis:
     image: redis:7-alpine
     container_name: cv-reviewer-staging-redis
     restart: always
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
       timeout: 5s
       retries: 3

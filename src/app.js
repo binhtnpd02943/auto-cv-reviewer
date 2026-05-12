@@ -1,8 +1,13 @@
 // app.js
-require('dotenv').config();
+const config = require('./config');
 const express = require('express');
-const routes = require('./routes/api');
+const helmet = require('helmet');
+const cors = require('cors');
+const morgan = require('morgan');
+const compression = require('compression');
+const rateLimit = require('express-rate-limit');
 
+const routes = require('./routes/api');
 const swaggerDocs = require('./config/swagger');
 
 // Cấu hình BullMQ & Các Workers ---
@@ -30,15 +35,36 @@ createBullBoard({
 // -------------------------------------
 
 const app = express();
-const port = process.env.PORT || 3000;
 
-// Middleware parse JSON
+// Security & Optimization Middleware
+app.use(helmet());
+app.use(cors());
+app.use(compression());
 app.use(express.json());
+app.use(morgan(config.nodeEnv === 'production' ? 'combined' : 'dev'));
 
-// Gắn giao diện Dashboard quản lý Queue cho Backend Team
+// Rate Limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100 // limit each IP to 100 requests per windowMs
+});
+app.use('/api/', limiter);
+
+// Health Check
+app.get('/health', async (req, res) => {
+  try {
+    // Check Redis connection via one of the queues
+    await extractQueue.client;
+    res.status(200).json({ status: 'OK', environment: config.nodeEnv });
+  } catch (err) {
+    res.status(503).json({ status: 'Error', message: 'Redis unavailable' });
+  }
+});
+
+// Giao diện Dashboard quản lý Queue
 app.use('/admin/queues', serverAdapter.getRouter());
 
-// Gắn các API routes chính
+// Các API routes chính
 app.use('/api', routes);
 
 // Route test server
@@ -48,15 +74,42 @@ app.get('/', (req, res) => {
 
 swaggerDocs(app);
 
+// Global Error Handler
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({ 
+    message: 'Internal Server Error',
+    error: config.nodeEnv === 'development' ? err.message : {}
+  });
+});
+
 // Khởi động server
-app.listen(port, () => {
+const server = app.listen(config.port, () => {
   console.log(`\n======================================================`);
-  console.log(`🚀 Server connected to http://localhost:${port}`);
-
-  console.log(
-    `📖 Swagger tự động quét API tại: http://localhost:${port}/api-docs`,
-  );
-
-  console.log(`📊 Queues: http://localhost:${port}/admin/queues`);
+  console.log(`🚀 Server connected to http://localhost:${config.port}`);
+  console.log(`🌍 Environment: ${config.nodeEnv}`);
   console.log(`======================================================`);
 });
+
+// Graceful Shutdown
+const gracefulShutdown = (signal) => {
+  console.log(`\nReceived ${signal}. Shutting down gracefully...`);
+  server.close(async () => {
+    console.log('HTTP server closed.');
+    try {
+      await Promise.all([
+        extractQueue.close(),
+        aiQueue.close(),
+        successQueue.close()
+      ]);
+      console.log('Redis connections closed.');
+      process.exit(0);
+    } catch (err) {
+      console.error('Error during shutdown:', err);
+      process.exit(1);
+    }
+  });
+};
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));

@@ -1,12 +1,11 @@
 // src/queues/index.js
 const { Queue } = require('bullmq');
 const IORedis = require('ioredis');
+const config = require('../config');
 
 // 1. Cấu hình Redis Connection
 const redisConfig = {
-  host: process.env.REDIS_HOST || '127.0.0.1',
-  port: process.env.REDIS_PORT || 6379,
-  password: process.env.REDIS_PASSWORD || undefined,
+  ...config.redis,
   maxRetriesPerRequest: null,
   enableReadyCheck: false,
 };
